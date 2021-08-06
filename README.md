@@ -1,2 +1,3 @@
-# IMD
-Image Mask Designer (IMD): utility engine to create complex masks for image analysis and modeling.
+# The Image Mask Designer (IMD)
+
+This is a Python utility engine to create complex masks for image analysis and modeling.
