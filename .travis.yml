@@ -5,10 +5,6 @@ language: python
 python:
   - 3.8
 
-# jobs:
-#   allow_failures:
-#     - python: 2.7
-
 services:
   - xvfb
 
