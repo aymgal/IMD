@@ -32,7 +32,7 @@ class PyTest(TestCommand):
 
 #history = open('HISTORY.rst').read().replace('.. :changelog:', '')
 
-desc = open("README.rst").read()
+desc = open("README.md").read()
 requires = ['configparser']
 tests_require=['pytest>=2.3', 'mock']
 
