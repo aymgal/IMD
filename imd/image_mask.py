@@ -15,16 +15,16 @@ class ImageMask(object):
     Code borrowed from TDLMCpipeline package (credits: A. Galan & M. Millon).
     """
 
-    def __init__(self, mask_shape, delta_pix, mask_type='square', 
-                 margin=10, radius_list=[], center_list=[], angle_list=[], axis_ratio_list=[], 
+    def __init__(self, mask_shape, delta_pix, mask_type_list=['square'], 
+                 margin_list=[10], radius_list=[], center_list=[], angle_list=[], axis_ratio_list=[], 
                  operation_list=[], inverted_list=[False], verbose=False):
         """
         :param mask_shape: 2D numpy array shape
         :param delta_pix: size of a pixel in physical units
-        :param mask_type: 'square', 'circle', 'ellipse'
-        :param margin: only for 'square' mask, the width of margins on all sides (in arcsec)
-        :param radius_list: only for 'circle' and 'ellipse' masks, list of radii of each circle
-        :param center_list: only for 'circle' and 'ellipse' masks, list of centers [x, y] of each circle, 
+        :param mask_type_list: list of string among 'square', 'circle', 'ellipse'
+        :param margin_list: only for 'square' mask (ignored with others), the width of margins on all sides (in arcsec)
+        :param radius_list: only for 'circle' and 'ellipse' masks (ignored with others), list of radii of each circle
+        :param center_list: only for 'circle' and 'ellipse' masks (ignored with others), list of centers [x, y] of each circle, 
         :param (None are replaced by the center of the image)
         :param angle_list: only for 'ellipse' mask, list of ellipse orientation angles in degrees
         :param axis_ratio_list: only for 'ellipse' mask, list of axis ratio b/a
@@ -35,21 +35,16 @@ class ImageMask(object):
         if len(mask_shape) != 2:
             raise ValueError("Only 2D arrays are supported for mask creation (for now)")
 
-        self.mask_type = mask_type
+        self.mask_type_list = mask_type_list
+        self.num_components = len(mask_type_list)
         self._mask_shape = mask_shape
         self._delta_pix = delta_pix
 
         # translate physical units to pixels
         dp = self._delta_pix
-        self._margin = margin / dp
-        self._radius_list = [r / dp for r in radius_list]
-        self._center_list = []
-        for c in center_list:
-            if c is not None:
-                # convert wrt pixel size
-                self._center_list.append([i / dp for i in c])
-            else:
-                self._center_list.append(c)
+        self._margin_list = [m / dp if m is not None else 0. for m in margin_list]
+        self._radius_list = [r / dp if r is not None else 0. for r in radius_list]
+        self._center_list = [(c[0] / dp, c[1] / dp) if c is not None else None for c in center_list]
 
         # translate degrees to radians
         self._angle_list = [a * np.pi / 180. if a is not None else None for a in angle_list]
@@ -57,11 +52,10 @@ class ImageMask(object):
 
         self._operation_list = operation_list
         self._inverted_list  = inverted_list
-        self._num_components = len(radius_list)
         self._fill_list_gaps()
 
-        if self.mask_type not in ['circle', 'ellipse']:
-            self._num_components = 0
+        if any([mt not in ['square', 'circle', 'ellipse'] for mt in mask_type_list]):
+            self.num_components = 0
             if len(operation_list) > 0 and verbose:
                 print("WARNING : operations on are not supported on 'margin' masks")
             elif len(inverted_list) > 0 and verbose:
@@ -72,48 +66,37 @@ class ImageMask(object):
         inverted : if True, invert the whole mask
         show_details : if True, show a plot of the mask, and possibly the steps followed to build it 
         """
-        if self.mask_type == 'square':
-            mask = self._create_margin_mask(self._margin, inverted)
-            mask_list = [mask]
+        if self.num_components > 0:
+            mask, mask_list = None, []
+            for i, mask_type in enumerate(self.mask_type_list):
+                inv = self._inverted_list[i]
 
-        elif self.mask_type in ['circle', 'ellipse']:
-            assert len(self._radius_list) == len(self._center_list), \
-                    "Number of radii should equal number of centers"
-
-            r0 = self._radius_list[0]
-            c0 = self._center_list[0]
-            inv0 = self._inverted_list[0]
-            if self.mask_type == 'circle':
-                mask = self._create_circular_mask(radius=r0, center=c0,
-                                                  inverted=inv0)
-            elif self.mask_type == 'ellipse':
-                phi0 = self._angle_list[0]
-                q0 = self._axis_ratio_list[0]
-                mask = self._create_elliptical_mask(radius=r0, center=c0,
-                                                    phi=phi0, q=q0,
-                                                    inverted=inv0)
-
-            mask_list = [mask]
-
-            if self._num_components > 1:
-                for i in range(1, self._num_components):
+                if mask_type == 'circle':
                     c = self._center_list[i]
                     r = self._radius_list[i]
-                    inv = self._inverted_list[i]
+                    mask_tmp = self._create_circular_mask(radius=r, center=c,
+                                                          inverted=inv)
+                elif mask_type == 'ellipse':
+                    c = self._center_list[i]
+                    r = self._radius_list[i]
+                    phi = self._angle_list[i]
+                    q = self._axis_ratio_list[i]
+                    mask_tmp = self._create_elliptical_mask(radius=r, center=c,
+                                                            phi=phi, q=q,
+                                                            inverted=inv)
+                elif mask_type == 'square':
+                    m = self._margin_list[i]
+                    mask_tmp = self._create_margin_mask(margin=m, inverted=inv)
 
-                    if self.mask_type == 'circle':
-                        mask_tmp = self._create_circular_mask(radius=r, center=c,
-                                                              inverted=inv)
-                    elif self.mask_type == 'ellipse':
-                        phi = self._angle_list[i]
-                        q = self._axis_ratio_list[i]
-                        mask_tmp = self._create_elliptical_mask(radius=r, center=c,
-                                                                phi=phi, q=q,
-                                                                inverted=inv)
-                    mask_list.append(mask_tmp)
+                # save mask as it is for showing details
+                mask_list.append(mask_tmp)
 
+                # combine the new mask with current one
+                if i > 0:
                     op = self._operation_list[i-1]
                     mask = self.combine_masks(mask, mask_tmp, operation=op)
+                else:
+                    mask = mask_tmp
 
         else:
             mask = np.ones(self._mask_shape)
@@ -138,13 +121,13 @@ class ImageMask(object):
 
     def _fill_list_gaps(self):
         num_inv = len(self._inverted_list)
-        if num_inv < self._num_components:
-            gap = self._num_components - num_inv
+        if num_inv < self.num_components:
+            gap = self.num_components - num_inv
             self._inverted_list += [False] * gap
 
         num_op = len(self._operation_list)
-        if num_op < self._num_components - 1:
-            gap = self._num_components - num_op
+        if num_op < self.num_components - 1:
+            gap = self.num_components - num_op
             self._operation_list += ['union'] * gap
 
     def _create_margin_mask(self, margin=5, inverted=False):
@@ -206,9 +189,9 @@ class ImageMask(object):
             fig, axes = plt.subplots(1, 1, figsize=(4, 3))
             ax = axes
         else:
-            fig, axes = plt.subplots(1, self._num_components+1, 
-                                     figsize=(4*self._num_components, 3))
-            for i in range(self._num_components):
+            fig, axes = plt.subplots(1, self.num_components+1, 
+                                     figsize=(4*self.num_components, 3))
+            for i in range(self.num_components):
                 ax = axes[i]
                 ax.imshow(mask_list[i], cmap='gray', vmin=0, vmax=1, origin='lower')
                 ax.set_title("Mask {}".format(i+1))
